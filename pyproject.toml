@@ -5,10 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "incident-management-openenv"
 version = "0.1.0"
-authors = [
-  { name = "P. Prema" }
-]
-description = "RL environment for IT incident management and on-call response"
+description = "RL environment for IT incident management"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -19,10 +16,11 @@ dependencies = [
     "requests==2.32.0",
     "python-dotenv==1.0.1",
     "httpx==0.27.0",
-    "anyio==4.4.0",
-    "starlette==0.37.2",
-    "typing-extensions==4.12.2"
+    "openenv-core>=0.2.0"
 ]
+
+[project.scripts]
+server = "app:main"
 
 [tool.setuptools]
 packages = ["environment"]
