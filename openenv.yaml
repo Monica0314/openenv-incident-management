@@ -1,0 +1,48 @@
+name: incident-management-env
+version: "1.0.0"
+description: "RL environment for AI-driven IT incident management and on-call response"
+tags:
+  - openenv
+  - incident-management
+  - real-world
+  - scheduling
+  - on-call
+  - sre
+
+tasks:
+  - id: alert-classification
+    difficulty: easy
+    description: "Classify incoming alert severity correctly as P1, P2, or P3"
+    max_steps: 8
+    expected_baseline_score: 0.65
+
+  - id: team-routing
+    difficulty: medium
+    description: "Route incidents to correct teams under resource constraints"
+    max_steps: 10
+    expected_baseline_score: 0.45
+
+  - id: cascade-resolution
+    difficulty: hard
+    description: "Resolve cascading failures across multiple services by identifying root cause"
+    max_steps: 10
+    expected_baseline_score: 0.25
+
+observation_space: "Structured alert data: service name, error type, severity signals, affected services, recent deployments, team availability, raw log snippets, live metrics"
+action_space: "severity classification (P1/P2/P3), team routing (backend/database/devops/security), resolution strategy (rollback/hotfix/monitor/escalate), confidence score (0.0-1.0)"
+reward_range: [-1.0, 1.0]
+max_steps: 10
+
+env_vars:
+  - name: HF_TOKEN
+    description: "HuggingFace API token for LLM inference"
+    required: true
+  - name: API_BASE_URL
+    description: "LLM API base URL"
+    default: "https://router.huggingface.co/v1"
+  - name: MODEL_NAME
+    description: "LLM model identifier"
+    default: "Qwen/Qwen2.5-72B-Instruct"
+  - name: ENV_BASE_URL
+    description: "Environment server URL"
+    default: "http://localhost:7860"

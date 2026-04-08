@@ -1,55 +1,23 @@
----
-title: Incident Management Env
-emoji: 🚀
-colorFrom: red
-colorTo: blue
-sdk: docker
-pinned: false
-license: mit
-short_description: AI agent for real-time incident triage & SRE
----
+# Incident Management & On-Call Response Environment
 
-# Incident Management & On-Call Response — OpenEnv
+## Overview
 
-DEMO VIDEO:https://www.loom.com/share/9ea374ab019f46c49ccfafe00198b341
+Every tech company runs thousands of microservices. When something breaks at 3am, an on-call engineer receives dozens of simultaneous alerts and must instantly classify severity, identify root cause vs side effects, route to the correct team, and decide whether to rollback or hotfix — all under extreme time pressure. Wrong decisions cost thousands of dollars per minute in downtime.
 
-## What is this?
-
-3am. Payment service is down. 47 alerts firing at once. You have no idea which one is the real problem.
-
-This is something on-call engineers at Amazon, Netflix, Swiggy deal with every single day. One wrong call — wrong team, wrong fix — costs thousands of dollars per minute. I kept thinking about how there's no good way to train an AI agent for exactly this situation.
-
-So I figured I'd build one and see how far I could take it.
+This OpenEnv environment simulates exactly that problem. An AI agent acts as an intelligent on-call incident responder, receiving structured alert observations with real log snippets and live metrics, and must take correct actions across 3 tasks of increasing difficulty.
 
 ---
 
-## Why this problem
+## Motivation
 
-**PagerDuty** is a $3B company. **FireHydrant** raised $50M. **OpsRamp** got acquired by HP. All of them exist because incident response is genuinely hard and genuinely expensive when done wrong.
+Companies like PagerDuty, FireHydrant, and OpsRamp are billion-dollar businesses built around incident management. Netflix, Amazon, Google, and Swiggy all run SRE teams whose primary job is what this agent must learn. No clean RL training environment for this domain existed in OpenEnv — this project fills that gap.
 
-But there's no RL training environment for this. Agents get trained on games and toy problems. Nobody built one for the thing that actually wakes engineers up at 3am.
-
-That gap felt worth filling.
-
----
-
-## How it works
-
-The agent sees a real-feeling incident alert — not just a label, but an actual log snippet like:
-
-```
-ERROR: Connection pool exhausted after 30s at payment-service:8080 — 
-67% of requests timing out
-```
-
-along with live metrics (error rate, p99 latency, requests/sec), which downstream services are affected, what got deployed recently, and which teams have engineers available right now.
-
-From that, the agent has to decide:
-- **how bad is this** — P1, P2, or P3
-- **who should own it** — backend, database, devops, or security
-- **what should they do** — rollback, hotfix, monitor, or escalate
-
-Three tasks. Gets harder each time.
+Key pain points this environment captures:
+- Alert storms with multiple simultaneous failures
+- Cascading failures where symptoms mask the real root cause
+- Resource-constrained team routing (security team has 1 engineer!)
+- Misdirection scenarios where the obvious culprit is NOT the root cause
+- Time pressure — every step costs reward
 
 ---
 
@@ -57,87 +25,106 @@ Three tasks. Gets harder each time.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `step` | int | Current step in the episode |
-| `service_name` | str | The failing service |
-| `error_type` | str | timeout, OOM, connection_refused, etc. |
-| `severity_signals` | List[str] | latency_spike, error_rate_high, revenue_impact, etc. |
-| `affected_services` | List[str] | What else broke because of this |
-| `recent_deployments` | List[str] | What got pushed in the last 2 hours |
-| `active_teams` | Dict[str, int] | Team → available engineers right now |
-| `time_elapsed_seconds` | int | How long since this started |
-| `current_incident_count` | int | How many incidents are active |
-| `task_id` | str | Which task is running |
-| `raw_log` | str | Actual log line from the failing service |
-| `metrics` | Dict[str, float] | error_rate, p99_latency_ms, requests_per_sec |
+| `step` | int | Current step number in the episode |
+| `service_name` | str | Name of the primary failing service |
+| `error_type` | str | Error category: timeout, OOM, connection_refused, etc. |
+| `severity_signals` | List[str] | Observable signals: latency_spike, error_rate_high, etc. |
+| `affected_services` | List[str] | Downstream services impacted by this failure |
+| `recent_deployments` | List[str] | Deployments pushed in the last 2 hours |
+| `active_teams` | Dict[str, int] | Team name → number of available engineers |
+| `time_elapsed_seconds` | int | Seconds since incident started |
+| `current_incident_count` | int | Total active incidents right now |
+| `task_id` | str | Which task is being evaluated |
+| `raw_log` | str | Realistic log snippet from the failing service |
+| `metrics` | Dict[str, float] | Live metrics: error_rate, p99_latency_ms, requests_per_sec |
 
 ---
 
 ## Action Space
 
-| Field | Type | Values | What it means |
-|-------|------|--------|---------------|
-| `severity` | str | P1, P2, P3 | How critical is this |
-| `assigned_team` | str | backend, database, devops, security | Who handles it |
-| `resolution_strategy` | str | rollback, hotfix, monitor, escalate | What to do |
-| `confidence` | float | 0.0 – 1.0 | How sure are you |
+| Field | Type | Allowed Values | Description |
+|-------|------|---------------|-------------|
+| `severity` | str | P1, P2, P3 | Incident severity classification |
+| `assigned_team` | str | backend, database, devops, security | Team to handle the incident |
+| `resolution_strategy` | str | rollback, hotfix, monitor, escalate | How to resolve the incident |
+| `confidence` | float | 0.0 – 1.0 | Agent confidence in this action |
 
 ---
 
-## The 3 Tasks
+## Tasks
 
-### Task 1 — Alert Classification (Easy)
+### Task 1: Alert Classification (Easy)
 
-One alert. Read the log and metrics. Decide if it's P1, P2, or P3.
+**Objective:** Given a single alert with raw logs and metrics, classify its severity as P1, P2, or P3.
 
-It gets tricky when a P2 looks like a P1 because three downstream services are also failing because of it. The grader gives partial credit for being one level off — because in real incidents, adjacent severity calls happen.
+**Grader logic:**
+- Exact severity match: 1.0
+- Adjacent severity (P1↔P2 or P2↔P3): 0.5
+- Wrong severity: 0.0
 
-- exact match = 1.0 / one level off = 0.5 / wrong = 0.0
-- expected score: ~0.65
+**Episode length:** 8 steps
 
----
-
-### Task 2 — Team Routing (Medium)
-
-10 incidents arrive one after another. Backend has 3 engineers, database has 2, devops has 4, security has only 1.
-
-Route each incident to the right team without overloading anyone. I added a gaming prevention penalty too — if the agent just routes everything to backend because it's the most common, it gets penalized for that.
-
-- routing accuracy minus overload penalty minus gaming penalty
-- expected score: ~0.45
+**Expected baseline score:** ~0.65
 
 ---
 
-### Task 3 — Cascade Resolution (Hard)
+### Task 2: Team Routing (Medium)
 
-Five services fail in a chain. One of them caused all of it. The agent has to figure out which one actually started it — not just which one is loudest.
+**Objective:** Route 10 incoming incidents to the correct teams while respecting capacity limits.
 
-Some scenarios have a deliberate misdirection — a service that looks guilty in the logs but isn't. The real root cause is upstream. If the agent falls for it and tries to fix the wrong service, the cascade gets worse and the score drops.
+**Team capacities:** backend: 3, database: 2, devops: 4, security: 1
 
-- root cause correctly identified: +0.5
-- correct resolution strategy: +0.4
-- didn't fall for misdirection: +0.1
-- time penalty: -0.03 per step
-- expected score: ~0.25
+**Grader logic:**
+- Routing accuracy score
+- Overload penalty: -0.1 per excess engineer over capacity
+- Gaming prevention penalty: -0.2 if >60% routed to backend
+
+**Episode length:** 10 steps
+
+**Expected baseline score:** ~0.45
+
+---
+
+### Task 3: Cascade Resolution (Hard)
+
+**Objective:** In a multi-service cascade failure, identify the root cause service and apply the correct resolution strategy.
+
+**Grader logic:**
+- Root cause identified: +0.5
+- Correct resolution strategy: +0.4
+- Misdirection avoided: +0.1 bonus
+- Fell for misdirection: -0.2 penalty
+- Time penalty: -0.03 per step
+
+**Special mechanic:** Some scenarios have misdirection — a service that looks like the root cause in logs but is not. The agent must read raw_log carefully.
+
+**Episode length:** 10 steps
+
+**Expected baseline score:** ~0.25
 
 ---
 
 ## Reward Function
 
 ```
-reward = (
-    severity_score  × 0.35
-  + routing_score   × 0.35
-  + strategy_score  × 0.20
-  + cascade_bonus   × 0.10
-  - step × 0.03
-  + confidence_bonus × 0.10
+total = (
+    severity_score  × 0.35  +
+    routing_score   × 0.35  +
+    strategy_score  × 0.20  +
+    cascade_bonus   × 0.10  -
+    time_penalty          (step × 0.03)  +
+    confidence_bonus × 0.10
 )
-clamped to [-1.0, 1.0]
+total = clamp(total, -1.0, 1.0)
 ```
 
-One thing I spent time on — the confidence calibration bonus. If the agent says it's 90% confident and it's actually right 90% of the time, it gets a bonus. If it says 90% confident but is only right 40% of the time, it gets penalized. I added this because it felt wrong to reward lucky guessing — confidence should mean something.
+**Confidence calibration bonus:** Agent earns up to +0.2 bonus when its stated confidence matches its actual accuracy over the episode. This rewards well-calibrated uncertainty — a rare and valuable property in RL agents.
 
-Reward is never the same value twice — it depends on the step number, the action taken, and the ground truth. So the agent always gets a meaningful signal.
+**Key properties:**
+- Never returns same value twice (depends on step + action + ground truth)
+- Partial progress signal at every step
+- Penalizes bad behavior (wrong routing, cascade worsening)
+- Rewards calibrated confidence
 
 ---
 
@@ -151,55 +138,53 @@ Reward is never the same value twice — it depends on the step number, the acti
 
 ---
 
-## Running it
+## Setup & Usage
+
+### Docker (recommended)
 
 ```bash
+# Build image
 docker build -t incident-env .
-docker run -p 7860:7860 -e HF_TOKEN=your_token incident-env
 
-# test reset
+# Run locally
+docker run -p 7860:7860 \
+  -e HF_TOKEN=your_token_here \
+  incident-env
+
+# Test endpoints
 curl -X POST http://localhost:7860/reset \
   -H "Content-Type: application/json" \
   -d '{"task_id": "alert-classification", "seed": 42}'
 
-# see all tasks
 curl http://localhost:7860/tasks
+
+curl http://localhost:7860/health
 ```
 
+### Run inference baseline
+
 ```bash
-# run baseline
-export HF_TOKEN=your_token
+export HF_TOKEN=your_token_here
 export ENV_BASE_URL=http://localhost:7860
 python inference.py
+```
+
+### Validate OpenEnv compliance
+
+```bash
+openenv validate
 ```
 
 ---
 
 ## Environment Variables
 
-| Variable | Default | Notes |
-|----------|---------|-------|
-| `HF_TOKEN` | — | required |
-| `API_BASE_URL` | https://router.huggingface.co/v1 | LLM endpoint |
-| `MODEL_NAME` | Qwen/Qwen2.5-72B-Instruct | swap for any compatible model |
-| `ENV_BASE_URL` | http://localhost:7860 | where the env is running |
-
----
-
-## API Endpoints
-
-| Method | Path | What it does |
-|--------|------|--------------|
-| GET | `/` | info + status |
-| GET | `/health` | liveness check |
-| POST | `/reset` | start a new episode |
-| POST | `/step` | send an action, get observation + reward |
-| GET | `/state` | full state + episode history |
-| GET | `/tasks` | all 3 tasks with schemas |
-| POST | `/grader` | score a completed episode |
-| POST | `/baseline` | run the inference script |
-
-API docs auto-generated at `/docs`.
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HF_TOKEN` | HuggingFace API key for LLM inference | required |
+| `API_BASE_URL` | LLM API endpoint | https://router.huggingface.co/v1 |
+| `MODEL_NAME` | Model identifier | Qwen/Qwen2.5-72B-Instruct |
+| `ENV_BASE_URL` | Environment server URL | http://localhost:7860 |
 
 ---
 
@@ -209,15 +194,32 @@ API docs auto-generated at `/docs`.
 incident-management-env/
 ├── environment/
 │   ├── __init__.py
-│   ├── models.py       # pydantic models — raw_log + metrics included
-│   ├── scenarios.py    # 30+ scenarios, seed-based, deterministic
-│   ├── graders.py      # one grader per task, no randomness in scoring
-│   ├── reward.py       # per-step reward, confidence calibration included
-│   └── env.py          # main environment class
-├── app.py              # fastapi server
-├── inference.py        # baseline — [START][STEP][END] format
-├── Dockerfile
-├── requirements.txt    # all versions pinned
-├── openenv.yaml
-└── README.md
+│   ├── models.py       # Pydantic models with raw_log + metrics
+│   ├── scenarios.py    # 30+ seed-based deterministic scenarios
+│   ├── graders.py      # Deterministic graders for all 3 tasks
+│   ├── reward.py       # Per-step reward with confidence calibration
+│   └── env.py          # Main OpenEnv environment class
+├── app.py              # FastAPI server — all 6 endpoints
+├── inference.py        # Baseline inference script
+├── Dockerfile          # Container definition
+├── requirements.txt    # Pinned dependencies
+├── openenv.yaml        # OpenEnv metadata
+└── README.md           # This file
 ```
+
+---
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | Health check + info |
+| GET | `/health` | Liveness probe |
+| POST | `/reset` | Reset environment, returns initial observation |
+| POST | `/step` | Take action, returns observation + reward + done |
+| GET | `/state` | Full environment state + episode history |
+| GET | `/tasks` | All 3 tasks with action schemas |
+| POST | `/grader` | Grade a completed episode |
+| POST | `/baseline` | Run baseline inference script |
+
+Interactive API docs available at `/docs` after deployment.
