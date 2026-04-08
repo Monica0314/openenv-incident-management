@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-server = "app:main"
+server = "server.app:main"
 
 [tool.setuptools]
-packages = ["environment"]
+packages = ["environment", "server"]
