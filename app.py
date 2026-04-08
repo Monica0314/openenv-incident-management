@@ -4,6 +4,7 @@ All required endpoints: /reset /step /state /tasks /grader /baseline
 """
 import subprocess
 import json
+import uvicorn
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -308,3 +309,17 @@ async def baseline():
         raise HTTPException(status_code=504, detail="Baseline inference timed out after 20 minutes.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Baseline failed: {str(e)}")
+
+# ─────────────────────────────────────────────
+# FINAL ENTRY POINT
+# ─────────────────────────────────────────────
+
+def main():
+    """
+    Entry point for the OpenEnv grader.
+    Uses 'server.app:app' because the file is in the server folder.
+    """
+    uvicorn.run("server.app:app", host="0.0.0.0", port=7860)
+
+if __name__ == "__main__":
+    main()
